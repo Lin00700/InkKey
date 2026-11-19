@@ -9,6 +9,8 @@ iPhone 上的九宫格（T9）中英文输入法，打字时上行中文、下�
 
 ## 键盘布局
 
+![键盘预览](docs/keyboard-preview.png)
+
 ```
 ，  [1 @#] [2 ABC] [3 DEF]        ⌫
 。  [4 GHI] [5 JKL] [6 MNO]       重输
@@ -79,9 +81,13 @@ xcodegen generate
 open InkKey.xcodeproj
 ```
 
-或直接用 GitHub Actions：`.github/workflows/build-ipa.yml`（未签名 IPA，产物在 Release）。
-本仓库不跟踪该 workflow 文件（本地通过 `.git/info/exclude` 排除），
-需要自己贴到 GitHub 网页端新建文件里（token 没有 workflows 权限）。
+或直接用 GitHub Actions（未签名 IPA，产物在 Release）：
+
+1. 打开 `docs/build-ipa.yml` 复制全文
+2. 在网页新建 `.github/workflows/build-ipa.yml` 粘贴提交：
+   <https://github.com/Lin00700/InkKey/new/main?filename=.github/workflows/build-ipa.yml>
+   （仓库里的 `.github/workflows/` 通过 `.git/info/exclude` 排除，避免推送被 workflows 权限挡住）
+3. push 触发的 macOS runner 偶尔排队超时，失败就到 Actions 页 `Run workflow` 手动重跑
 
 ## 安装与启用
 
