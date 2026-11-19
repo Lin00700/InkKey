@@ -11,7 +11,7 @@ import os
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 S = 3  # @3x
-W, H = 393, 340
+W, H = 393, 369
 WIDTH, HEIGHT = W * S, H * S
 
 PAPER = (247, 243, 236)
@@ -115,7 +115,22 @@ def main():
         cx += cw + gap
 
     # keys area
-    keys_top = top + cand_h + 5 * S
+    # editing toolbar (height 26) — 粘贴 / 复制 / 剪切 / 清空 / 换行 + 手写
+    edit_top = top + cand_h + 3 * S
+    edit_h = 26 * S
+    toggle_w = 62 * S
+    action_w = (content_w - gap * 5 - toggle_w) / 5
+    ex = margin
+    for label in ["粘贴", "复制", "剪切", "清空", "换行"]:
+        rounded(draw, [ex, edit_top, ex + action_w, edit_top + edit_h], 6 * S, KEY_FILL, DIVIDER, max(1, S // 2))
+        text(draw, (ex + action_w / 2, edit_top + edit_h / 2), label, 12, INK_SOFT)
+        ex += action_w + gap
+    tx = margin + content_w - toggle_w
+    rounded(draw, [tx, edit_top, tx + toggle_w, edit_top + edit_h], 6 * S,
+            (SEAL[0], SEAL[1], SEAL[2]), SEAL, max(1, S // 2))
+    text(draw, (tx + toggle_w / 2, edit_top + edit_h / 2), "手写", 12, PAPER)
+
+    keys_top = edit_top + edit_h + 4 * S
     keys_h = HEIGHT - keys_top - 6 * S
     unit = max(28 * S, (content_w - gap * 4) / 4.76)
     punct_w = unit * 0.86

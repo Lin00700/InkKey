@@ -91,17 +91,44 @@ def main():
         check("group.com.lin.inkkey" in groups, f"{rel} carries group.com.lin.inkkey")
 
     print("dictionary")
-    with open(os.path.join(ROOT, "Resources", "dictionary.json"), encoding="utf-8") as fh:
-        data = json.load(fh)
-    size = os.path.getsize(os.path.join(ROOT, "Resources", "dictionary.json"))
-    check(data.get("v") == 1, "dictionary version 1")
-    check(len(data.get("cn", [])) > 10000, f"chinese entries {len(data.get('cn', []))} > 10000")
-    check(len(data.get("en", [])) > 8000, f"english entries {len(data.get('en', []))} > 8000")
-    check(500_000 <= size <= 2_100_000, f"dictionary size {size/1024/1024:.2f} MB is within 0.5-2 MB")
-    bad = [row for row in data["cn"][:500] if len(row) != 4 or not row[0] or not row[2]]
-    check(not bad, "chinese rows are [word, pinyin, gloss, freq]")
-    bad = [row for row in data["en"][:500] if len(row) != 4 or not row[0] or not row[2]]
-    check(not bad, "english rows are [word, ipa, meaning, rank]")
+    dict_path = os.path.join(ROOT, "Resources", "dictionary.tsv")
+    check(os.path.isfile(dict_path), "Resources/dictionary.tsv exists")
+    with open(dict_path, encoding="utf-8") as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        rows = fh.readlines()
+    check(header and header[0] == "v2", "dictionary header is v2")
+    cn_count = int(header[1]) if len(header) > 1 else 0
+    en_count = int(header[2]) if len(header) > 2 else 0
+    size = os.path.getsize(dict_path)
+    check(cn_count >= 35000, f"chinese entries {cn_count} >= 35000")
+    check(en_count >= 8000, f"english entries {en_count} >= 8000")
+    check(len(rows) == cn_count + en_count, f"{len(rows)} data lines match the header")
+    check(2_000_000 <= size <= 4_500_000, f"dictionary size {size/1024/1024:.2f} MB is within 2-4.5 MB")
+    bad = [row for row in rows[:500] if len(row.rstrip("\n").split("\t")) != 4]
+    check(not bad, "rows are word<TAB>reading<TAB>gloss<TAB>score")
+    chars = sum(1 for row in rows[:cn_count] if len(row.split("\t", 1)[0]) == 1)
+    check(chars >= 4000, f"{chars} single characters in the Chinese set")
+
+    print("handwriting")
+    hw_path = os.path.join(ROOT, "Resources", "handwriting.bin")
+    check(os.path.isfile(hw_path), "Resources/handwriting.bin exists")
+    if os.path.isfile(hw_path):
+        with open(hw_path, "rb") as fh:
+            blob = fh.read()
+        check(blob[:4] == b"IKHX", "handwriting magic is IKHX")
+        version, pps, _ = struct.unpack_from("<HBB", blob, 4)
+        (hw_count,) = struct.unpack_from("<I", blob, 8)
+        check(version == 1, "handwriting layout version 1")
+        check(6 <= pps <= 12, f"{pps} points per stroke")
+        check(hw_count >= 6500, f"{hw_count} characters in the handwriting set")
+        expected = 12 + hw_count * 16
+        total_points = 0
+        for index in range(hw_count):
+            strokes = blob[12 + index * 16 + 4]
+            offset = struct.unpack_from("<I", blob, 12 + index * 16 + 8)[0]
+            total_points = max(total_points, offset + strokes * pps)
+        check(expected + total_points * 2 == len(blob),
+              f"point block matches {hw_count} records ({len(blob)} bytes)")
 
     print("app icon")
     icon_path = os.path.join(ROOT, "InkKey", "Assets.xcassets", "AppIcon.appiconset", "AppIcon-1024.png")
@@ -148,11 +175,30 @@ def main():
     check("selectSyllable" in model_swift, "model locks pinyin syllables")
     check("updateSentence" in model_swift, "model owns the sentence reference row")
     check("keyboardHeight" in model_swift, "model reports the height its extra rows need")
+    check("toggleHandwriting" in model_swift, "model owns the 手写 mode")
+    check("recognizeInk" in model_swift, "model runs handwriting recognition")
+    for name in ("func paste()", "func copy()", "func cut()", "func clearInput()"):
+        check(name in model_swift, f"editing action {name} present")
 
     view = read("InkKeyKeyboard/KeyboardView.swift")
     check("SentenceReferenceRow" in view, "sentence row wired into the root view")
     check("InlineSyllableStrip" in view, "pinyin chips wired into the root view")
     check("model.returnKeyLabel" in view, "return key label reaches the keys")
+    check("EditActionStrip" in view, "editing toolbar wired into the root view")
+    for label in ("粘贴", "复制", "剪切", "清空", "换行"):
+        check(label in view, f"toolbar offers {label}")
+    check("model.handwriting" in view, "keys area switches to the ink pad")
+
+    pad = read("InkKeyKeyboard/HandwritingPadView.swift")
+    for label in ("撤一笔", "重写", "空格", "换行"):
+        check(label in pad, f"ink pad offers {label}")
+    check("DragGesture" in pad, "ink pad collects touches")
+    check("model.recognizeInk" in pad, "ink pad reports strokes to the model")
+
+    recognizer = read(f"{shared}/HandwritingRecognizer.swift")
+    check("IKHX" in recognizer or "magic" in recognizer, "recogniser validates the template file")
+    check("func recognize(strokes" in recognizer, "recogniser exposes recognize(strokes:)")
+    check("resample" in recognizer, "strokes are resampled before matching")
 
     dictionary_swift = read(f"{shared}/InkDictionary.swift")
     check("func composition(forDigits" in dictionary_swift, "phrase/sentence Viterbi composition present")

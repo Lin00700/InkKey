@@ -181,4 +181,44 @@ final class KeyboardViewController: UIInputViewController, KeyboardActionHandler
         }
         proxy.insertText(text)
     }
+
+    // MARK: - Clipboard
+
+    /// 粘贴: whatever is on the pasteboard, straight into the document.
+    func pasteFromClipboard() -> Int {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else { return 0 }
+        let clipped = String(text.prefix(20000))
+        textDocumentProxy.insertText(clipped)
+        return clipped.count
+    }
+
+    /// 复制: the selection when there is one, otherwise the line before the
+    /// caret, so the key is still useful on a plain text field.
+    func copySelectionToClipboard() -> Int {
+        let proxy = textDocumentProxy
+        var value: String?
+        if let selected = proxy.selectedText, !selected.isEmpty {
+            value = selected
+        } else if let context = proxy.documentContextBeforeInput, !context.isEmpty {
+            let line = context.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? context
+            let picked = line.isEmpty ? context : line
+            value = String(picked.suffix(400))
+        }
+        guard let text = value, !text.isEmpty else { return 0 }
+        UIPasteboard.general.string = text
+        return text.count
+    }
+
+    /// 剪切: only acts on a selection — deleting text the user did not point at
+    /// would be far too easy to do by accident.
+    func cutSelectionToClipboard() -> Int {
+        let proxy = textDocumentProxy
+        guard let selected = proxy.selectedText, !selected.isEmpty else { return 0 }
+        UIPasteboard.general.string = selected
+        let count = min(selected.count, 4000)
+        for _ in 0 ..< count {
+            proxy.deleteBackward()
+        }
+        return count
+    }
 }

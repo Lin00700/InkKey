@@ -204,8 +204,8 @@ struct SetupView: View {
                         detail: "每个候选都有小喇叭，点一下就朗读并自动记进生词本"),
             FeatureItem(id: 2, icon: "textformat", title: "字体随意换",
                         detail: "宋体、楷体、圆体、等宽，还能导入自己的 ttf / otf"),
-            FeatureItem(id: 3, icon: "bolt.horizontal", title: "离线词库",
-                        detail: "约 1.5MB 内置词库，中文 1.45 万条、英文 9000 词，断网可用")
+            FeatureItem(id: 3, icon: "bolt.horizontal", title: "离线词库 + 手写",
+                        detail: "中文 4.1 万条、英文 9000 词，另有 6,708 字离线手写，断网可用")
         ]
         let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
         return LazyVGrid(columns: columns, spacing: 12) {

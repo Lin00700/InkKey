@@ -1,12 +1,21 @@
 import Foundation
 
-// usage: dictionary-check <path-to-dictionary.json>
+// usage: dictionary-check <path-to-dictionary.tsv>
 let args = CommandLine.arguments
 guard args.count > 1 else {
-    print("usage: dictionary-check <dictionary.json>")
+    print("usage: dictionary-check <dictionary.tsv>")
     exit(2)
 }
-InkDictionaryStore.resourceURLOverride = URL(fileURLWithPath: args[1])
+
+// The workflow still passes the old .json path; the payload is now a .tsv.
+var dictionaryPath = args[1]
+if !FileManager.default.fileExists(atPath: dictionaryPath) {
+    let alternative = (dictionaryPath as NSString).deletingPathExtension + ".tsv"
+    if FileManager.default.fileExists(atPath: alternative) {
+        dictionaryPath = alternative
+    }
+}
+InkDictionaryStore.resourceURLOverride = URL(fileURLWithPath: dictionaryPath)
 
 let store = InkDictionaryStore.shared
 var finished = false
@@ -17,6 +26,16 @@ while !finished && Date() < deadline {
 }
 
 print("loaded: cn=\(store.chinese.count) en=\(store.english.count) error=\(store.loadError ?? "none")")
+
+var failed = 0
+if store.chinese.count < 35000 {
+    print("FAIL chinese vocabulary \(store.chinese.count) should be at least 35000")
+    failed += 1
+}
+if store.english.count < 8000 {
+    print("FAIL english vocabulary \(store.english.count) should be at least 8000")
+    failed += 1
+}
 
 func show(_ digits: String, _ mode: InkMode) {
     let hits = store.candidates(for: digits, mode: mode, limit: 5)
@@ -59,7 +78,6 @@ let checks: [(String, InkMode, String)] = [
     ("43556", .english, "hello"),
     ("96753", .english, "world")
 ]
-var failed = 0
 for (digits, mode, expected) in checks {
     let top = store.candidates(for: digits, mode: mode, limit: 1).first?.primary ?? "<none>"
     if top != expected {
@@ -88,5 +106,14 @@ if completions.first?.primary != "help" || !completions.contains(where: { $0.pri
     print("FAIL english completions for hel should lead with help and include hello")
     failed += 1
 }
+
+// handwriting -> bilingual candidates (你 = U+4F60)
+let ink = store.candidates(forCharacters: [0x4F60], limit: 4)
+print("handwriting 4F60 -> " + ink.map { "\($0.primary)/\($0.phonetic)/\($0.secondary)" }.joined(separator: ", "))
+if ink.first?.primary != "你" || ink.first?.phonetic != "ni" || ink.first?.secondary.isEmpty != false {
+    print("FAIL handwriting lookup for 你 should carry pinyin and a gloss")
+    failed += 1
+}
+
 print(failed == 0 ? "ALL_OK" : "FAILURES=\(failed)")
 exit(failed == 0 ? 0 : 1)

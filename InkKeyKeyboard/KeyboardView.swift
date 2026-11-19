@@ -14,10 +14,12 @@ import SwiftUI
 
 enum KeyboardMetrics {
     static let portraitHeight: CGFloat = 340
-    static let landscapeHeight: CGFloat = 262
+    static let landscapeHeight: CGFloat = 246
     static let candidateHeight: CGFloat = 88
     static let sentenceRowHeight: CGFloat = 30
     static let syllableRowHeight: CGFloat = 26
+    /// 粘贴 / 复制 / 剪切 / 清空 / 换行 + 手写 toggle, always visible.
+    static let editRowHeight: CGFloat = 26
     static let rowSpacing: CGFloat = 3
     static let gap: CGFloat = 6
 }
@@ -56,6 +58,9 @@ struct KeyboardRootView: View {
 
                     CandidateStrip(model: model, palette: palette)
                         .frame(maxHeight: .infinity)
+
+                    EditActionStrip(model: model, palette: palette)
+                        .frame(height: KeyboardMetrics.editRowHeight)
 
                     if model.showsSyllableRow {
                         InlineSyllableStrip(
@@ -107,7 +112,9 @@ struct KeysArea: View {
 
     var body: some View {
         GeometryReader { geo in
-            if model.mode == .english {
+            if model.handwriting {
+                HandwritingPad(model: model, palette: palette)
+            } else if model.mode == .english {
                 EnglishKeysArea(model: model, palette: palette)
             } else {
                 chineseLayout(geo)
@@ -310,6 +317,79 @@ struct KeysArea: View {
             onTap: { model.insertSymbol($0) }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Editing toolbar
+
+/// The thin always-visible row under the candidates: 粘贴 · 复制 · 剪切 · 清空 ·
+/// 换行, plus the 手写 / 键盘 toggle.  These are the keys the user asked for, so
+/// they stay one tap away instead of hiding behind an expand arrow.
+struct EditActionStrip: View {
+    @ObservedObject var model: KeyboardModel
+    @ObservedObject private var fonts = InkFontCenter.shared
+    let palette: InkPalette
+
+    var body: some View {
+        HStack(spacing: 4) {
+            action("粘贴") { model.paste() }
+            action("复制") { model.copy() }
+            action("剪切") { model.cut() }
+            action("清空") { model.clearInput() }
+            action("换行") { model.newline() }
+            handwritingToggle
+        }
+    }
+
+    private func action(_ title: String, run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Text(title)
+                .font(fonts.swiftUIFont(size: 12, weight: .regular))
+                .foregroundStyle(palette.inkSoft)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(palette.keyFill.opacity(0.85))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(palette.divider.opacity(0.9), lineWidth: 0.6)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private var handwritingToggle: some View {
+        Button {
+            model.toggleHandwriting()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: model.handwriting ? "keyboard" : "scribble")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(model.handwriting ? "键盘" : "手写")
+                    .font(fonts.swiftUIFont(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(model.handwriting ? palette.paper : palette.seal)
+            .padding(.horizontal, 7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(model.handwriting ? palette.seal.opacity(0.9) : palette.seal.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(palette.seal.opacity(0.45), lineWidth: 0.6)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .frame(width: 62)
+        .accessibilityLabel(model.handwriting ? "切回键盘" : "切换手写")
     }
 }
 

@@ -22,6 +22,11 @@ protocol KeyboardActionHandler: AnyObject {
     /// Deletes the word before the caret (only when it still matches) and
     /// inserts `text` in its place — used by the English completions.
     func replaceTrailingWord(_ expected: String, with text: String)
+    /// Clipboard helpers behind the 粘贴/复制/剪切 keys.  Each returns how many
+    /// characters moved, so the bar can say what happened.
+    func pasteFromClipboard() -> Int
+    func copySelectionToClipboard() -> Int
+    func cutSelectionToClipboard() -> Int
 }
 
 enum InkCandidatePart {
@@ -64,6 +69,11 @@ final class KeyboardModel: ObservableObject {
     @Published private(set) var shift: InkShiftState = .off
     @Published private(set) var isLoading: Bool = true
     @Published private(set) var dictionaryCount: Int = 0
+    /// 手写 mode: the keys area shows the ink pad instead of the 9-key grid.
+    @Published var handwriting: Bool = false
+    /// Bumped whenever the pad should wipe itself (candidate inserted,
+    /// cleared, mode changed).
+    @Published private(set) var inkSerial: Int = 0
     @Published var toast: String?
     @Published var showsGlobe: Bool = false
     @Published var returnKeyLabel: String = "换行"
@@ -73,6 +83,7 @@ final class KeyboardModel: ObservableObject {
     private var baseHeight: CGFloat = KeyboardMetrics.portraitHeight
     private var compositionWords: [String] = []
     private var toastWork: DispatchWorkItem?
+    private var inkGeneration = 0
 
     init(mode: InkMode = InkSettings.shared.mode) {
         self.mode = mode
@@ -129,7 +140,7 @@ final class KeyboardModel: ObservableObject {
     }
 
     var topExtraHeight: CGFloat {
-        var extra: CGFloat = 0
+        var extra: CGFloat = KeyboardMetrics.editRowHeight + KeyboardMetrics.rowSpacing
         if showsSentenceRow { extra += KeyboardMetrics.sentenceRowHeight + KeyboardMetrics.rowSpacing }
         if showsSyllableRow { extra += KeyboardMetrics.syllableRowHeight + KeyboardMetrics.rowSpacing }
         return extra
@@ -201,6 +212,8 @@ final class KeyboardModel: ObservableObject {
 
     func toggleMode() {
         mode = mode.toggled
+        handwriting = false
+        inkSerial += 1
         buffer = ""
         lockedSyllables = []
         syllableOptions = []
@@ -240,6 +253,13 @@ final class KeyboardModel: ObservableObject {
     }
 
     func space() {
+        if handwriting {
+            handler?.insertText(" ")
+            inkSerial += 1
+            if !candidates.isEmpty { candidates = [] }
+            InkFeedback.tap()
+            return
+        }
         if mode == .chinese {
             if let first = candidates.first {
                 handler?.insertText(first.primary)
@@ -270,6 +290,108 @@ final class KeyboardModel: ObservableObject {
         handler?.hideKeyboard()
     }
 
+    // MARK: 手写
+
+    func toggleHandwriting() {
+        handwriting.toggle()
+        buffer = ""
+        lockedSyllables = []
+        syllableOptions = []
+        sentence = nil
+        compositionWords = []
+        candidates = []
+        shift = .off
+        page = .t9
+        inkGeneration += 1
+        inkSerial += 1
+        if handwriting {
+            mode = .chinese
+            InkSettings.shared.mode = .chinese
+            warmUpRecognizer()
+        }
+        recomputeHeight()
+        InkFeedback.soft()
+    }
+
+    private func warmUpRecognizer() {
+        DispatchQueue.global(qos: .utility).async {
+            HandwritingRecognizer.shared.loadIfNeeded()
+        }
+    }
+
+    /// Called by the pad every time a stroke ends.  The heavy matching runs on
+    /// a background queue; only the newest drawing may touch the strip.
+    func recognizeInk(_ strokes: [[CGPoint]]) {
+        guard handwriting else { return }
+        inkGeneration += 1
+        let generation = inkGeneration
+        guard !strokes.isEmpty else {
+            if !candidates.isEmpty { candidates = [] }
+            return
+        }
+        let points: [[InkHandwritingPoint]] = strokes.map { stroke in
+            stroke.map { InkHandwritingPoint(x: Double($0.x), y: Double($0.y)) }
+        }
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.04) { [weak self] in
+            let codes = HandwritingRecognizer.shared.recognize(strokes: points, limit: 12)
+            DispatchQueue.main.async {
+                guard let self, self.handwriting, generation == self.inkGeneration else { return }
+                self.candidates = InkDictionaryStore.shared.candidates(forCharacters: codes, limit: 12)
+                self.recomputeHeight()
+            }
+        }
+    }
+
+    // MARK: 编辑键（复制 / 粘贴 / 剪切 / 清空）
+
+    func paste() {
+        guard let handler else { return }
+        guard hasFullAccess else {
+            showToast("粘贴需要开启「允许完全访问」")
+            return
+        }
+        let count = handler.pasteFromClipboard()
+        showToast(count > 0 ? "已粘贴 \(count) 字" : "剪贴板里没有文字")
+        InkFeedback.soft()
+    }
+
+    func copy() {
+        guard let handler else { return }
+        guard hasFullAccess else {
+            showToast("复制需要开启「允许完全访问」")
+            return
+        }
+        let count = handler.copySelectionToClipboard()
+        showToast(count > 0 ? "已复制 \(count) 字" : "先选中文字，或先输入一点内容")
+        InkFeedback.soft()
+    }
+
+    func cut() {
+        guard let handler else { return }
+        guard hasFullAccess else {
+            showToast("剪切需要开启「允许完全访问」")
+            return
+        }
+        let count = handler.cutSelectionToClipboard()
+        showToast(count > 0 ? "已剪切 \(count) 字" : "先选中要剪切的文字")
+        InkFeedback.soft()
+    }
+
+    /// 清空：扔掉正在拼的拼音，或者抹掉手写板上的字。
+    func clearInput() {
+        if !buffer.isEmpty || !lockedSyllables.isEmpty {
+            resetBuffer()
+            showToast("已清空正在输入的内容")
+        } else if handwriting {
+            inkSerial += 1
+            if !candidates.isEmpty { candidates = [] }
+            showToast("已清空手写板")
+        } else {
+            showToast("没有正在输入的内容")
+        }
+        InkFeedback.soft()
+    }
+
     func insertCandidate(_ candidate: InkCandidate, part: InkCandidatePart) {
         let text: String
         switch (candidate.isChinese, part) {
@@ -277,6 +399,15 @@ final class KeyboardModel: ObservableObject {
         case (true, .secondary): text = InkCandidate.insertable(candidate.secondary)
         case (false, .primary): text = candidate.primary
         case (false, .secondary): text = InkCandidate.insertable(candidate.secondary)
+        }
+
+        if handwriting {
+            handler?.insertText(text)
+            recordPicks(for: candidate)
+            inkSerial += 1
+            if !candidates.isEmpty { candidates = [] }
+            InkFeedback.tap()
+            return
         }
 
         if mode == .english {
@@ -380,6 +511,10 @@ final class KeyboardModel: ObservableObject {
     }
 
     private func refreshCandidates() {
+        if handwriting {
+            recomputeHeight()
+            return
+        }
         guard page == .t9 else {
             if !candidates.isEmpty { candidates = [] }
             updateSyllableOptions()

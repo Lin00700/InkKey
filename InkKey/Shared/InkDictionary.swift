@@ -2,9 +2,12 @@
 //  InkDictionary.swift
 //  InkKey / InkKeyKeyboard
 //
-//  Compact offline bilingual dictionary.  Loading is done off the main thread
-//  and the entries are kept in flat arrays so the keyboard extension stays
-//  comfortably inside its memory ceiling.
+//  Compact offline bilingual dictionary (40k+ Chinese words).  The bundled
+//  file is a plain UTF-8 TSV — one line per entry — so loading is a single
+//  pass over the raw bytes instead of a JSON decode: quicker to start and far
+//  lighter in peak memory, which is what a keyboard extension needs.  The
+//  entries are kept in flat arrays so the extension stays comfortably inside
+//  its memory ceiling.
 //
 //  Besides plain T9 prefix matching it also provides
 //    - pinyin syllable options for the syllable strip on the 9-key layout,
@@ -18,6 +21,14 @@ import Foundation
 // MARK: - T9 mapping
 
 enum T9Mapper {
+    /// a…z -> digit, indexed by `ascii - 97`.  A table is several times
+    /// quicker than a [Character: Character] lookup, which matters while
+    /// 40k entries are loaded and on every keystroke.
+    private static let table: [UInt8] = [
+        2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6,
+        7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9
+    ]
+
     static let letterToDigit: [Character: Character] = [
         "a": "2", "b": "2", "c": "2",
         "d": "3", "e": "3", "f": "3",
@@ -29,26 +40,37 @@ enum T9Mapper {
         "w": "9", "x": "9", "y": "9", "z": "9"
     ]
 
+    private static func digit(of ascii: UInt8) -> UInt8? {
+        if ascii >= 65, ascii <= 90 { return table[Int(ascii - 65)] }   // A-Z
+        if ascii >= 97, ascii <= 122 { return table[Int(ascii - 97)] }  // a-z
+        return nil
+    }
+
     static func digits<S: StringProtocol>(_ text: S) -> String {
-        var out = ""
-        out.reserveCapacity(text.count)
-        for ch in text.lowercased() {
-            if let d = letterToDigit[ch] {
-                out.append(d)
-            }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(text.utf8.count)
+        for byte in text.utf8 {
+            if let d = digit(of: byte) { bytes.append(d + 48) }
         }
-        return out
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     /// "wo men" -> "96" (first letter of every pinyin syllable).
     static func initials(_ pinyin: String) -> String {
-        var out = ""
-        for syllable in pinyin.split(separator: " ") {
-            if let first = syllable.first, let d = letterToDigit[first] {
-                out.append(d)
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(pinyin.count)
+        var atSyllableStart = true
+        for byte in pinyin.utf8 {
+            if byte == 32 {
+                atSyllableStart = true
+                continue
+            }
+            if atSyllableStart, let d = digit(of: byte) {
+                bytes.append(d + 48)
+                atSyllableStart = false
             }
         }
-        return out
+        return String(decoding: bytes, as: UTF8.self)
     }
 }
 
@@ -142,10 +164,12 @@ final class InkDictionaryStore {
     private var isLoading = false
     private var waiters: [() -> Void] = []
 
-    private var wordIndex: [String: [InkEntry]] = [:]
+    private var wordIndex: [String: [Int32]] = [:]
     private var maxWordDigits = 1
     private var syllableIndex: [String: [InkSyllable]] = [:]
-    private var glossByWord: [String: String] = [:]
+    /// word -> index into `chinese` (an index instead of a second copy of the
+    /// gloss keeps 40k entries about 2 MB lighter).
+    private var entryIndexByWord: [String: Int] = [:]
     private var logTotal: Double = 17.7
 
     private init() {}
@@ -192,76 +216,141 @@ final class InkDictionaryStore {
     }
 
     private struct DictionaryIndex {
-        var wordIndex: [String: [InkEntry]] = [:]
+        var wordIndex: [String: [Int32]] = [:]
         var maxWordDigits = 1
         var syllables: [InkSyllable] = []
         var syllableIndex: [String: [InkSyllable]] = [:]
-        var glossByWord: [String: String] = [:]
+        var entryIndexByWord: [String: Int] = [:]
         var logTotal: Double = 17.7
     }
 
     private static func decode() -> Loaded {
         guard let url = resourceURLOverride
-                ?? Bundle.main.url(forResource: InkShared.dictionaryFileName, withExtension: "json") else {
+                ?? Bundle.main.url(forResource: InkShared.dictionaryFileName, withExtension: "tsv") else {
             return Loaded(cn: [], en: [], error: "找不到内置词库文件", index: DictionaryIndex())
         }
         do {
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            let payload = try JSONDecoder().decode(Payload.self, from: data)
-            let cn = entries(from: payload.cn, chinese: true)
-            let en = entries(from: payload.en, chinese: false)
-            let index = buildIndex(cn)
-            return Loaded(cn: cn, en: en, error: nil, index: index)
+            let parsed = parse(data)
+            if let error = parsed.error {
+                return Loaded(cn: [], en: [], error: error, index: DictionaryIndex())
+            }
+            let index = buildIndex(parsed.cn)
+            return Loaded(cn: parsed.cn, en: parsed.en, error: nil, index: index)
         } catch {
-            return Loaded(cn: [], en: [], error: "词库解析失败：\(error.localizedDescription)", index: DictionaryIndex())
+            return Loaded(cn: [], en: [], error: "词库读取失败：\(error.localizedDescription)", index: DictionaryIndex())
         }
     }
 
-    private struct Payload: Decodable {
-        let v: Int
-        let cn: [[String]]
-        let en: [[String]]
+    /// Reads the v2 TSV straight from bytes: header, `cnCount` Chinese lines,
+    /// then `enCount` English lines of `word<TAB>reading<TAB>gloss<TAB>score`.
+    private static func parse(_ data: Data) -> (cn: [InkEntry], en: [InkEntry], error: String?) {
+        var cn: [InkEntry] = []
+        var en: [InkEntry] = []
+        var failure: String?
+        cn.reserveCapacity(42000)
+        en.reserveCapacity(9000)
+
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let total = raw.count
+            var position = 0
+            var lineNumber = 0
+            var cnCount = 0
+            var enCount = 0
+            var parts: [String] = []
+            parts.reserveCapacity(4)
+
+            while position < total {
+                var end = position
+                while end < total && raw[end] != 0x0A { end += 1 }
+
+                if lineNumber == 0 {
+                    fields(raw, start: position, end: end, into: &parts)
+                    if parts.count >= 3, parts[0] == "v2",
+                       let cnValue = Int(parts[1]), let enValue = Int(parts[2]) {
+                        cnCount = cnValue
+                        enCount = enValue
+                    } else {
+                        failure = "词库版本不匹配"
+                        return
+                    }
+                } else if end > position {
+                    if cn.count < cnCount {
+                        if let entry = entry(from: raw, start: position, end: end, chinese: true, parts: &parts) {
+                            cn.append(entry)
+                        }
+                    } else if en.count < enCount {
+                        if let entry = entry(from: raw, start: position, end: end, chinese: false, parts: &parts) {
+                            en.append(entry)
+                        }
+                    }
+                }
+                position = end + 1
+                lineNumber += 1
+            }
+        }
+        return (cn, en, failure)
     }
 
-    private static func entries(from rows: [[String]], chinese: Bool) -> [InkEntry] {
-        var out: [InkEntry] = []
-        out.reserveCapacity(rows.count)
-        for row in rows {
-            guard row.count >= 4 else { continue }
-            let word = row[0]
-            let reading = row[1]
-            let gloss = row[2]
-            let score = Int(row[3]) ?? 0
-            guard !word.isEmpty, !gloss.isEmpty else { continue }
-            let digits = chinese ? T9Mapper.digits(reading) : T9Mapper.digits(word)
-            guard !digits.isEmpty else { continue }
-            let initials = chinese ? T9Mapper.initials(reading) : digits
-            out.append(InkEntry(
-                word: word,
-                reading: reading,
-                gloss: gloss,
-                score: score,
-                digits: digits,
-                initialDigits: initials,
-                isChinese: chinese
-            ))
+    private static func entry(from raw: UnsafeRawBufferPointer,
+                              start: Int,
+                              end: Int,
+                              chinese: Bool,
+                              parts: inout [String]) -> InkEntry? {
+        fields(raw, start: start, end: end, into: &parts)
+        guard parts.count >= 4 else { return nil }
+        let word = parts[0]
+        let reading = parts[1]
+        let gloss = parts[2]
+        guard !word.isEmpty, !gloss.isEmpty else { return nil }
+        let score = Int(parts[3]) ?? 0
+        let digits = chinese ? T9Mapper.digits(reading) : T9Mapper.digits(word)
+        guard !digits.isEmpty else { return nil }
+        let initials = chinese ? T9Mapper.initials(reading) : digits
+        return InkEntry(
+            word: word,
+            reading: reading,
+            gloss: gloss,
+            score: score,
+            digits: digits,
+            initialDigits: initials,
+            isChinese: chinese
+        )
+    }
+
+    private static func fields(_ raw: UnsafeRawBufferPointer,
+                               start: Int,
+                               end: Int,
+                               into out: inout [String]) {
+        out.removeAll(keepingCapacity: true)
+        var fieldStart = start
+        var index = start
+        while index <= end && out.count < 5 {
+            if index == end || raw[index] == 0x09 {
+                if index > fieldStart {
+                    out.append(String(decoding: raw[fieldStart ..< index], as: UTF8.self))
+                } else {
+                    out.append("")
+                }
+                fieldStart = index + 1
+            }
+            index += 1
         }
-        return out
     }
 
     /// Everything the keyboard needs for phrase composition, built off-main.
     private static func buildIndex(_ cn: [InkEntry]) -> DictionaryIndex {
         var index = DictionaryIndex()
-        var grouped: [String: [InkEntry]] = [:]
-        grouped.reserveCapacity(cn.count)
+        var grouped: [String: [Int32]] = [:]
+        grouped.reserveCapacity(cn.count / 2)
         var totals: Double = 0
         var syllableWeights: [String: (digits: String, weight: Int)] = [:]
 
-        for entry in cn {
+        for (position, entry) in cn.enumerated() {
             totals += Double(max(entry.score, 0)) + 1
-            grouped[entry.digits, default: []].append(entry)
-            if index.glossByWord[entry.word] == nil {
-                index.glossByWord[entry.word] = entry.gloss
+            grouped[entry.digits, default: []].append(Int32(position))
+            if index.entryIndexByWord[entry.word] == nil {
+                index.entryIndexByWord[entry.word] = position
             }
             for syllable in entry.reading.split(separator: " ") {
                 let text = String(syllable)
@@ -276,12 +365,16 @@ final class InkDictionaryStore {
         }
 
         // Keep only the strongest few words per digit string for the DP.
-        var trimmed: [String: [InkEntry]] = [:]
+        var trimmed: [String: [Int32]] = [:]
         trimmed.reserveCapacity(grouped.count)
         var maxDigits = 1
-        for (digits, entries) in grouped {
-            let sorted = entries.sorted { $0.score > $1.score }
-            trimmed[digits] = Array(sorted.prefix(4))
+        for (digits, positions) in grouped {
+            if positions.count > 4 {
+                let sorted = positions.sorted { cn[Int($0)].score > cn[Int($1)].score }
+                trimmed[digits] = Array(sorted.prefix(4))
+            } else {
+                trimmed[digits] = positions
+            }
             maxDigits = max(maxDigits, digits.count)
         }
         index.wordIndex = trimmed
@@ -309,8 +402,44 @@ final class InkDictionaryStore {
         maxWordDigits = index.maxWordDigits
         syllableList = index.syllables
         syllableIndex = index.syllableIndex
-        glossByWord = index.glossByWord
+        entryIndexByWord = index.entryIndexByWord
         logTotal = index.logTotal
+    }
+
+    // MARK: Handwriting lookups
+
+    /// The dictionary entry behind one Chinese character (pinyin + gloss).
+    func entry(forChinese word: String) -> InkEntry? {
+        guard isLoaded, let position = entryIndexByWord[word], position < chinese.count else { return nil }
+        return chinese[position]
+    }
+
+    /// Turns recognised code points into bilingual candidates for the strip.
+    func candidates(forCharacters characters: [UInt32], limit: Int = 12) -> [InkCandidate] {
+        guard isLoaded else { return [] }
+        var out: [InkCandidate] = []
+        out.reserveCapacity(min(characters.count, limit))
+        var seen = Set<String>()
+        for codepoint in characters {
+            guard let scalar = UnicodeScalar(codepoint) else { continue }
+            var text = ""
+            text.unicodeScalars.append(scalar)
+            guard seen.insert(text).inserted else { continue }
+            if let entry = entry(forChinese: text) {
+                out.append(Self.candidate(from: entry))
+            } else {
+                out.append(InkCandidate(
+                    id: "ink-\(text)",
+                    primary: text,
+                    secondary: "",
+                    phonetic: "",
+                    isChinese: true,
+                    speakText: ""
+                ))
+            }
+            if out.count >= limit { break }
+        }
+        return out
     }
 
     // MARK: Querying — plain candidates
@@ -468,8 +597,9 @@ final class InkDictionaryStore {
                 var length = 1
                 while length <= maxLength {
                     let key = String(chars[i ..< (i + length)])
-                    if let entries = wordIndex[key] {
-                        for entry in entries {
+                    if let positions = wordIndex[key] {
+                        for position in positions {
+                            let entry = chinese[Int(position)]
                             let score = best[i] + segmentScore(entry, boost: boost)
                             if score > best[i + length] {
                                 best[i + length] = score
@@ -530,8 +660,9 @@ final class InkDictionaryStore {
         guard !digits.isEmpty else { return nil }
         var bestEntry: InkEntry?
         var bestScore = -Double.greatestFiniteMagnitude
-        for (key, entries) in wordIndex where key.hasPrefix(digits) {
-            for entry in entries {
+        for (key, positions) in wordIndex where key.hasPrefix(digits) {
+            for position in positions {
+                let entry = chinese[Int(position)]
                 let score = Double(entry.score) + (boost?(entry.word) ?? 0) * 900
                 if score > bestScore {
                     bestScore = score
@@ -564,8 +695,8 @@ final class InkDictionaryStore {
             while length >= 1 {
                 let end = text.index(index, offsetBy: length)
                 let piece = String(text[index ..< end])
-                if let gloss = glossByWord[piece] {
-                    matched = InkCandidate.insertable(gloss)
+                if let position = entryIndexByWord[piece], position < chinese.count {
+                    matched = InkCandidate.insertable(chinese[position].gloss)
                     pieces.append(matched ?? "")
                     index = end
                     break
