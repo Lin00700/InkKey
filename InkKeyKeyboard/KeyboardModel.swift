@@ -417,7 +417,7 @@ final class KeyboardModel: ObservableObject {
 
         let composition = InkDictionaryStore.shared.composition(forDigits: digits, boost: boost)
         compositionWords = composition?.words.map { $0.word } ?? []
-        if let composition, composition.isMultiWord {
+        if let composition, composition.isMultiWord, composition.text.count >= 3 {
             let phrase = InkCandidate(
                 id: "phrase-\(composition.text)",
                 primary: composition.text,
