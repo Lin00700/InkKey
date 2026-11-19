@@ -377,8 +377,12 @@ final class InkDictionaryStore {
         guard isLoaded, !prefix.isEmpty else { return [] }
         let needle = prefix.lowercased()
         var hits: [InkEntry] = []
-        for entry in english where entry.word.lowercased().hasPrefix(needle) {
-            hits.append(entry)
+        for entry in english {
+            if entry.word.hasPrefix(needle) {
+                hits.append(entry)
+            } else if entry.word.lowercased().hasPrefix(needle) {
+                hits.append(entry)
+            }
             if hits.count > 400 { break }
         }
         guard !hits.isEmpty else { return [] }
@@ -387,8 +391,8 @@ final class InkDictionaryStore {
             let lhsExact = lhs.word.lowercased() == needle
             let rhsExact = rhs.word.lowercased() == needle
             if lhsExact != rhsExact { return lhsExact }
-            if lhs.word.count != rhs.word.count { return lhs.word.count < rhs.word.count }
             if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if lhs.word.count != rhs.word.count { return lhs.word.count < rhs.word.count }
             return lhs.word < rhs.word
         }
         return hits.prefix(limit).map { Self.candidate(from: $0) }

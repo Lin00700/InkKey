@@ -84,8 +84,8 @@ if !syllableOptions.contains(where: { $0.text == "ni" }) {
     print("FAIL syllable options for 64 should contain ni")
     failed += 1
 }
-if completions.first?.primary != "hello" {
-    print("FAIL english completions for hel should lead with hello")
+if completions.first?.primary != "help" || !completions.contains(where: { $0.primary == "hello" }) {
+    print("FAIL english completions for hel should lead with help and include hello")
     failed += 1
 }
 print(failed == 0 ? "ALL_OK" : "FAILURES=\(failed)")

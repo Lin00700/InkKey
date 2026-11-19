@@ -13,6 +13,8 @@ iPhone 上的中英双语输入法：中文用九宫格拼音，英文用 26 键
 
 ### 中文九宫格（默认）
 
+![中文九宫格预览](docs/keyboard-preview.png)
+
 ```
 ，  [1 @#] [2 ABC] [3 DEF]        ⌫
 。  [4 GHI] [5 JKL] [6 MNO]       重输
