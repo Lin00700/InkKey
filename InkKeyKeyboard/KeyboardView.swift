@@ -11,7 +11,8 @@
 import SwiftUI
 
 enum KeyboardMetrics {
-    static let totalHeight: CGFloat = 340
+    static let portraitHeight: CGFloat = 340
+    static let landscapeHeight: CGFloat = 262
     static let candidateHeight: CGFloat = 88
     static let gap: CGFloat = 6
 }
@@ -56,7 +57,7 @@ struct KeyboardRootView: View {
                     .transition(.opacity)
             }
         }
-        .frame(height: KeyboardMetrics.totalHeight)
+        .frame(height: model.keyboardHeight)
         .background(palette.paper)
     }
 }

@@ -38,6 +38,7 @@ final class KeyboardModel: ObservableObject {
     @Published private(set) var dictionaryCount: Int = 0
     @Published var toast: String?
     @Published var showsGlobe: Bool = false
+    @Published var keyboardHeight: CGFloat = KeyboardMetrics.portraitHeight
 
     private var toastWork: DispatchWorkItem?
 

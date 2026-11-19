@@ -42,7 +42,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardActionHandler
         ])
         hostingController = host
 
-        let height = view.heightAnchor.constraint(equalToConstant: KeyboardMetrics.totalHeight)
+        let height = view.heightAnchor.constraint(equalToConstant: KeyboardMetrics.portraitHeight)
         height.priority = UILayoutPriority(999)
         height.isActive = true
         heightConstraint = height
@@ -60,9 +60,24 @@ final class KeyboardViewController: UIInputViewController, KeyboardActionHandler
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if let constraint = heightConstraint,
-           abs(constraint.constant - KeyboardMetrics.totalHeight) > 0.5 {
-            constraint.constant = KeyboardMetrics.totalHeight
+        updateKeyboardHeight()
+    }
+
+    private func updateKeyboardHeight() {
+        guard view.bounds.width > 1 else { return }
+        // The keyboard view itself is wider than it is tall in portrait, so the
+        // orientation has to come from the screen.
+        let screen = view.window?.windowScene?.screen.bounds ?? UIScreen.main.bounds
+        let isLandscape = screen.width > screen.height
+        let target = isLandscape ? KeyboardMetrics.landscapeHeight : KeyboardMetrics.portraitHeight
+        if abs((heightConstraint?.constant ?? 0) - target) > 0.5 {
+            heightConstraint?.constant = target
+        }
+        if abs(model.keyboardHeight - target) > 0.5 {
+            model.keyboardHeight = target
+        }
+        if abs(preferredContentSize.height - target) > 0.5 {
+            preferredContentSize = CGSize(width: 0, height: target)
         }
     }
 
