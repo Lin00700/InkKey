@@ -415,8 +415,9 @@ final class InkDictionaryStore {
     }
 
     /// Turns recognised code points into bilingual candidates for the strip.
+    /// Works before the dictionary finishes loading too: the character is still
+    /// offered, just without its pinyin and gloss.
     func candidates(forCharacters characters: [UInt32], limit: Int = 12) -> [InkCandidate] {
-        guard isLoaded else { return [] }
         var out: [InkCandidate] = []
         out.reserveCapacity(min(characters.count, limit))
         var seen = Set<String>()

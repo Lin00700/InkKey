@@ -41,6 +41,7 @@ final class HandwritingRecognizer {
     private var pointsPerStroke = 6
     private var recordBase = 12
     private var pointBase = 12
+    private let loadLock = NSLock()
     private(set) var isLoaded = false
     private(set) var loadError: String?
     private(set) var templateCount = 0
@@ -50,6 +51,8 @@ final class HandwritingRecognizer {
     // MARK: Loading
 
     func loadIfNeeded() {
+        loadLock.lock()
+        defer { loadLock.unlock() }
         guard !isLoaded else { return }
         isLoaded = true
         guard let url = Self.resourceURLOverride

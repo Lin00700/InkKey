@@ -60,6 +60,9 @@ struct CandidateStrip: View {
     }
 
     private var emptyHint: String {
+        if model.handwriting {
+            return "手写中文 · 落一笔就出候选，点字上屏"
+        }
         if model.mode == .chinese {
             return "九宫格拼音 · 例如 96636 → 我们"
         }
@@ -91,6 +94,9 @@ struct CandidateStrip: View {
     }
 
     private var bufferEcho: String {
+        if model.handwriting {
+            return "手写"
+        }
         if model.mode == .english {
             return model.buffer.isEmpty ? "26键" : model.buffer
         }
