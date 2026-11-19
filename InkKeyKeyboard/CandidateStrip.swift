@@ -5,7 +5,9 @@
 //  The bilingual two-line candidate strip.  Every candidate is a pair:
 //    Chinese mode : 中文词  /  English translation   (tap either line)
 //    English mode : word    /  中文释义              (tap either line)
+//  A composed phrase/sentence gets its own 句 tag in front of the word list.
 //  The little speaker speaks the English side and files it into 生词本.
+//  The trailing chevron closes the keyboard in every mode and page.
 //
 
 import SwiftUI
@@ -18,6 +20,7 @@ struct CandidateStrip: View {
     var body: some View {
         HStack(spacing: 6) {
             modeBadge
+
             if model.isLoading {
                 message("词库加载中…")
             } else if model.candidates.isEmpty {
@@ -40,6 +43,8 @@ struct CandidateStrip: View {
                     .padding(.vertical, 2)
                 }
             }
+
+            dismissButton
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
@@ -58,7 +63,7 @@ struct CandidateStrip: View {
         if model.mode == .chinese {
             return "九宫格拼音 · 例如 96636 → 我们"
         }
-        return "T9 English · 例如 43556 → hello"
+        return "26 键英文 · 输入字母看补全、音标与释义"
     }
 
     private var modeBadge: some View {
@@ -75,7 +80,7 @@ struct CandidateStrip: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             }
-            .frame(width: 40)
+            .frame(width: 44)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -86,8 +91,36 @@ struct CandidateStrip: View {
     }
 
     private var bufferEcho: String {
-        if model.buffer.isEmpty { return "九宫" }
-        return model.buffer
+        if model.mode == .english {
+            return model.buffer.isEmpty ? "26键" : model.buffer
+        }
+        let locked = model.lockedSyllables.joined(separator: " ")
+        if locked.isEmpty {
+            return model.buffer.isEmpty ? "拼音" : model.buffer
+        }
+        return locked + " " + model.buffer
+    }
+
+    /// Always present, in every mode and page: closes the keyboard.
+    private var dismissButton: some View {
+        Button {
+            model.dismissKeyboard()
+        } label: {
+            Image(systemName: "keyboard.chevron.compact.down")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(palette.inkSoft)
+                .frame(width: 36, height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(palette.keyFill.opacity(0.8))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(palette.divider.opacity(0.85), lineWidth: 0.6)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("收起键盘")
     }
 
     private func message(_ text: String) -> some View {
@@ -112,22 +145,6 @@ struct CandidateCell: View {
     let onSecondary: () -> Void
     let onSpeak: () -> Void
 
-    init(candidate: InkCandidate,
-         isFirst: Bool,
-         palette: InkPalette,
-         fonts: InkFontCenter,
-         onPrimary: @escaping () -> Void,
-         onSecondary: @escaping () -> Void,
-         onSpeak: @escaping () -> Void) {
-        self.candidate = candidate
-        self.isFirst = isFirst
-        self.palette = palette
-        self.fonts = fonts
-        self.onPrimary = onPrimary
-        self.onSecondary = onSecondary
-        self.onSpeak = onSpeak
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onPrimary) {
@@ -138,11 +155,25 @@ struct CandidateCell: View {
                             .foregroundStyle(palette.secondaryText)
                             .lineLimit(1)
                     }
-                    Text(candidate.primary)
-                        .font(fonts.swiftUIFont(size: candidate.isChinese ? 21 : 19, weight: .medium))
-                        .foregroundStyle(palette.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                    HStack(spacing: 3) {
+                        if candidate.isPhrase {
+                            Text("句")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(palette.paper)
+                                .padding(.horizontal, 3)
+                                .padding(.vertical, 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                        .fill(palette.seal.opacity(0.85))
+                                )
+                        }
+                        Text(candidate.primary)
+                            .font(fonts.swiftUIFont(size: candidate.isPhrase ? 16 : (candidate.isChinese ? 21 : 19),
+                                                    weight: .medium))
+                            .foregroundStyle(palette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -176,7 +207,7 @@ struct CandidateCell: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .frame(minWidth: 80, idealWidth: 104, maxWidth: 168, alignment: .leading)
+        .frame(minWidth: 80, idealWidth: 104, maxWidth: candidate.isPhrase ? 220 : 168, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(isFirst ? palette.keyFill : Color.clear)

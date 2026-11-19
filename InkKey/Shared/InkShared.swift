@@ -60,6 +60,11 @@ enum InkKeyName {
     static let fontCustomList = "ink.settings.fontCustomList"
     static let fontActiveCustom = "ink.settings.fontActiveCustom"
     static let didFinishSetup = "ink.settings.didFinishSetup"
+    static let translateOnline = "ink.settings.translateOnline"
+    static let translateEndpoint = "ink.settings.translateEndpoint"
+    static let translateModel = "ink.settings.translateModel"
+    static let translateKey = "ink.settings.translateKey"
+    static let userFrequency = "ink.settings.userFrequency"
 }
 
 // MARK: - Small value types
@@ -69,7 +74,7 @@ enum InkMode: String, CaseIterable, Identifiable, Codable {
     case english
 
     var id: String { rawValue }
-    var title: String { self == .chinese ? "中文九宫格" : "English T9" }
+    var title: String { self == .chinese ? "中文九宫格" : "英文 26 键" }
     var shortTitle: String { self == .chinese ? "中文" : "English" }
     var toggled: InkMode { self == .chinese ? .english : .chinese }
 }
@@ -118,6 +123,20 @@ final class InkSettings: ObservableObject {
     @Published var hapticsEnabled: Bool {
         didSet { InkShared.defaults.set(hapticsEnabled, forKey: InkKeyName.haptics) }
     }
+    /// Sentence reference: ask a translation endpoint while typing.
+    @Published var translateOnline: Bool {
+        didSet { InkShared.defaults.set(translateOnline, forKey: InkKeyName.translateOnline) }
+    }
+    /// Empty means the built-in zero-key Google endpoint is used.
+    @Published var translateEndpoint: String {
+        didSet { InkShared.defaults.set(translateEndpoint, forKey: InkKeyName.translateEndpoint) }
+    }
+    @Published var translateModel: String {
+        didSet { InkShared.defaults.set(translateModel, forKey: InkKeyName.translateModel) }
+    }
+    @Published var translateKey: String {
+        didSet { InkShared.defaults.set(translateKey, forKey: InkKeyName.translateKey) }
+    }
 
     private init() {
         let d = InkShared.defaults
@@ -131,6 +150,15 @@ final class InkSettings: ObservableObject {
         } else {
             hapticsEnabled = d.bool(forKey: InkKeyName.haptics)
         }
+        if d.object(forKey: InkKeyName.translateOnline) == nil {
+            translateOnline = true
+        } else {
+            translateOnline = d.bool(forKey: InkKeyName.translateOnline)
+        }
+        translateEndpoint = d.string(forKey: InkKeyName.translateEndpoint) ?? ""
+        let storedModel = d.string(forKey: InkKeyName.translateModel) ?? ""
+        translateModel = storedModel.isEmpty ? "gpt-4o-mini" : storedModel
+        translateKey = d.string(forKey: InkKeyName.translateKey) ?? ""
     }
 
     /// Re-reads values another process may have changed (keyboard -> app).
@@ -146,7 +174,20 @@ final class InkSettings: ObservableObject {
         if a != accent { accent = a }
         if abs(r - speechRate) > 0.0001 { speechRate = r }
         if h != hapticsEnabled { hapticsEnabled = h }
+
+        let online = (d.object(forKey: InkKeyName.translateOnline) as? Bool) ?? translateOnline
+        let endpoint = d.string(forKey: InkKeyName.translateEndpoint) ?? ""
+        let model = d.string(forKey: InkKeyName.translateModel) ?? ""
+        let key = d.string(forKey: InkKeyName.translateKey) ?? ""
+        if online != translateOnline { translateOnline = online }
+        if endpoint != translateEndpoint { translateEndpoint = endpoint }
+        let modelResolved = model.isEmpty ? "gpt-4o-mini" : model
+        if modelResolved != translateModel { translateModel = modelResolved }
+        if key != translateKey { translateKey = key }
     }
+
+    /// True when either a custom endpoint or the built-in one may be used.
+    var translationAvailable: Bool { translateOnline }
 }
 
 // MARK: - Palette

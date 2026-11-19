@@ -40,6 +40,7 @@ struct SettingsView: View {
                 fontCard(palette)
                 speechCard(palette)
                 keyboardCard(palette)
+                translateCard(palette)
                 aboutCard(palette)
             }
             .padding(.horizontal, 18)
@@ -354,11 +355,86 @@ struct SettingsView: View {
                         .foregroundStyle(palette.ink)
                     Picker("默认输入模式", selection: $settings.mode) {
                         Text("中文九宫格").tag(InkMode.chinese)
-                        Text("English T9").tag(InkMode.english)
+                        Text("英文 26 键").tag(InkMode.english)
                     }
                     .pickerStyle(.segmented)
                 }
             }
+        }
+    }
+
+    // MARK: Sentence translation
+
+    private func translateCard(_ palette: InkPalette) -> some View {
+        InkCard(palette: palette) {
+            VStack(alignment: .leading, spacing: 12) {
+                InkSectionLabel(text: "整句翻译参考", palette: palette)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("在线翻译")
+                            .font(fonts.swiftUIFont(size: 14))
+                            .foregroundStyle(palette.ink)
+                        Text("打出中文短语时在候选上方显示英文参考；关掉就只用离线逐词释义")
+                            .font(fonts.swiftUIFont(size: 10))
+                            .foregroundStyle(palette.secondaryText)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $settings.translateOnline)
+                        .labelsHidden()
+                        .tint(palette.seal)
+                }
+
+                InkDivider(palette: palette)
+
+                translateField("接口地址", text: $settings.translateEndpoint,
+                               placeholder: "留空用内置公共接口，例如 https://api.openai.com/v1",
+                               palette: palette)
+                translateField("模型", text: $settings.translateModel,
+                               placeholder: "gpt-4o-mini",
+                               palette: palette)
+                translateField("API Key", text: $settings.translateKey,
+                               placeholder: "sk-…（可留空）",
+                               palette: palette,
+                               secure: true)
+
+                Text("只发送你正在组句的中文文本，用来取回英文参考；键盘需要「允许完全访问」才能联网。")
+                    .font(fonts.swiftUIFont(size: 10))
+                    .foregroundStyle(palette.secondaryText.opacity(0.9))
+            }
+        }
+    }
+
+    private func translateField(_ title: String,
+                                text: Binding<String>,
+                                placeholder: String,
+                                palette: InkPalette,
+                                secure: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(fonts.swiftUIFont(size: 11))
+                .foregroundStyle(palette.secondaryText)
+            Group {
+                if secure {
+                    SecureField(placeholder, text: text)
+                } else {
+                    TextField(placeholder, text: text)
+                }
+            }
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled(true)
+            .font(fonts.swiftUIFont(size: 12))
+            .foregroundStyle(palette.ink)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(palette.paper.opacity(0.8))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(palette.divider, lineWidth: 0.7)
+            )
         }
     }
 

@@ -2,10 +2,12 @@
 //  KeyboardView.swift
 //  InkKeyKeyboard
 //
-//  The keyboard itself: 3x3 T9 grid, punctuation column, function column,
-//  bilingual candidate strip, symbol and number pages.
-//  Layout mirrors the reference design: four punctuation marks on the left,
-//  backspace / 重输 / tall 换行 on the right, 符号 123 空格 中英 along the bottom.
+//  The keyboard itself.  Two layouts share one frame:
+//    - Chinese 9-key: 3x3 T9 grid, punctuation column, function column,
+//      bilingual candidate strip, pinyin syllable strip, sentence reference,
+//      symbol and number pages.
+//    - English 26-key: QWERTY rows with shift, backspace and a return key that
+//      carries the host's own label (搜索 / 发送 / 前往 …).
 //
 
 import SwiftUI
@@ -14,6 +16,9 @@ enum KeyboardMetrics {
     static let portraitHeight: CGFloat = 340
     static let landscapeHeight: CGFloat = 262
     static let candidateHeight: CGFloat = 88
+    static let sentenceRowHeight: CGFloat = 30
+    static let syllableRowHeight: CGFloat = 26
+    static let rowSpacing: CGFloat = 3
     static let gap: CGFloat = 6
 }
 
@@ -27,6 +32,7 @@ struct KeyboardRootView: View {
 
     var body: some View {
         let palette = InkPalette.resolve(settings.theme, scheme: colorScheme)
+        let topHeight = KeyboardMetrics.candidateHeight + model.topExtraHeight
         ZStack(alignment: .top) {
             LinearGradient(
                 colors: [palette.paperDeep, palette.paper],
@@ -35,8 +41,36 @@ struct KeyboardRootView: View {
             )
 
             VStack(spacing: 5) {
-                CandidateStrip(model: model, palette: palette)
-                    .frame(height: KeyboardMetrics.candidateHeight - 8)
+                VStack(spacing: KeyboardMetrics.rowSpacing) {
+                    if model.showsSentenceRow, let sentence = model.sentence {
+                        SentenceReferenceRow(
+                            sentence: sentence,
+                            palette: palette,
+                            fonts: fonts,
+                            onChinese: { model.insertSentenceChinese() },
+                            onEnglish: { model.insertSentenceEnglish() },
+                            onSpeak: { model.speakSentence() }
+                        )
+                        .frame(height: KeyboardMetrics.sentenceRowHeight)
+                    }
+
+                    CandidateStrip(model: model, palette: palette)
+                        .frame(maxHeight: .infinity)
+
+                    if model.showsSyllableRow {
+                        InlineSyllableStrip(
+                            options: model.syllableOptions,
+                            locked: model.lockedSyllables,
+                            palette: palette,
+                            fonts: fonts,
+                            onSelect: { model.selectSyllable($0) },
+                            onClear: { model.clearSyllableLocks() }
+                        )
+                        .frame(height: KeyboardMetrics.syllableRowHeight)
+                    }
+                }
+                .frame(height: topHeight)
+
                 KeysArea(model: model, palette: palette)
                     .frame(maxHeight: .infinity)
             }
@@ -53,7 +87,7 @@ struct KeyboardRootView: View {
                     .background(
                         Capsule().fill(palette.ink.opacity(0.86))
                     )
-                    .padding(.top, KeyboardMetrics.candidateHeight + 22)
+                    .padding(.top, topHeight + 12)
                     .transition(.opacity)
             }
         }
@@ -73,34 +107,44 @@ struct KeysArea: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = geo.size.width
-            let height = geo.size.height
-            let unit = max(28, (width - gap * 4) / 4.76)
-            let punctWidth = unit * 0.86
-            let functionWidth = unit * 0.90
-            let bottomHeight = max(36, (height - gap * 3) * 0.19)
-            let rowHeight = max(34, (height - gap * 3 - bottomHeight) / 3)
-
-            HStack(spacing: gap) {
-                VStack(spacing: gap) {
-                    HStack(spacing: gap) {
-                        if model.page == .t9 {
-                            punctuationColumn(width: punctWidth, height: rowHeight * 3 + gap * 2)
-                            t9Grid(unit: unit, rowHeight: rowHeight)
-                        } else if model.page == .numbers {
-                            numberPad(rowHeight: rowHeight)
-                        } else {
-                            symbolPad(rowHeight: rowHeight)
-                        }
-                    }
-                    .frame(height: rowHeight * 3 + gap * 2)
-
-                    bottomBar(unit: unit, punctWidth: punctWidth, height: bottomHeight)
-                        .frame(height: bottomHeight)
-                }
-
-                functionColumn(width: functionWidth, rowHeight: rowHeight, bottomHeight: bottomHeight)
+            if model.mode == .english {
+                EnglishKeysArea(model: model, palette: palette)
+            } else {
+                chineseLayout(geo)
             }
+        }
+    }
+
+    // MARK: Chinese 9-key
+
+    private func chineseLayout(_ geo: GeometryProxy) -> some View {
+        let width = geo.size.width
+        let height = geo.size.height
+        let unit = max(28, (width - gap * 4) / 4.76)
+        let punctWidth = unit * 0.86
+        let functionWidth = unit * 0.90
+        let bottomHeight = max(36, (height - gap * 3) * 0.19)
+        let rowHeight = max(30, (height - gap * 3 - bottomHeight) / 3)
+
+        return HStack(spacing: gap) {
+            VStack(spacing: gap) {
+                HStack(spacing: gap) {
+                    if model.page == .t9 {
+                        punctuationColumn(width: punctWidth, height: rowHeight * 3 + gap * 2)
+                        t9Grid(unit: unit, rowHeight: rowHeight)
+                    } else if model.page == .numbers {
+                        numberPad()
+                    } else {
+                        symbolPad()
+                    }
+                }
+                .frame(height: rowHeight * 3 + gap * 2)
+
+                bottomBar(unit: unit, punctWidth: punctWidth, height: bottomHeight)
+                    .frame(height: bottomHeight)
+            }
+
+            functionColumn(width: functionWidth, rowHeight: rowHeight, bottomHeight: bottomHeight)
         }
     }
 
@@ -179,7 +223,7 @@ struct KeysArea: View {
 
             InkKey(
                 palette: palette,
-                title: "换行",
+                title: model.returnKeyLabel,
                 titleFont: fonts.swiftUIFont(size: 15, weight: .regular),
                 isFunction: true
             ) {
@@ -244,46 +288,59 @@ struct KeysArea: View {
 
     // MARK: Symbol pad
 
-    private func symbolPad(rowHeight: CGFloat) -> some View {
-        let columns = 5
-        let items = Array(InkSymbols.wide.prefix(columns * 4))
-        let cellHeight = max(30, (rowHeight * 3 + gap * 2 - gap * 3) / 4)
-        let grid = Array(repeating: GridItem(.flexible(), spacing: 4), count: columns)
-        return LazyVGrid(columns: grid, spacing: 4) {
-            ForEach(items, id: \.self) { symbol in
-                InkKey(
-                    palette: palette,
-                    title: symbol,
-                    titleFont: fonts.swiftUIFont(size: 17, weight: .regular)
-                ) {
-                    model.insertSymbol(symbol)
-                }
-                .frame(height: cellHeight)
-            }
-        }
-        .frame(maxWidth: .infinity)
+    private func symbolPad() -> some View {
+        InkSymbolPad(
+            symbols: InkSymbols.wide,
+            columns: 5,
+            palette: palette,
+            fonts: fonts,
+            onTap: { model.insertSymbol($0) }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Number pad
 
-    private func numberPad(rowHeight: CGFloat) -> some View {
-        let columns = 4
-        let items = Array(InkSymbols.numbers.prefix(columns * 4))
-        let cellHeight = max(30, (rowHeight * 3 + gap * 2 - gap * 3) / 4)
-        let grid = Array(repeating: GridItem(.flexible(), spacing: 4), count: columns)
-        return LazyVGrid(columns: grid, spacing: 4) {
-            ForEach(items, id: \.self) { symbol in
-                InkKey(
-                    palette: palette,
-                    title: symbol,
-                    titleFont: fonts.swiftUIFont(size: 18, weight: .regular)
-                ) {
-                    model.insertSymbol(symbol)
+    private func numberPad() -> some View {
+        InkSymbolPad(
+            symbols: InkSymbols.numbers,
+            columns: 4,
+            palette: palette,
+            fonts: fonts,
+            onTap: { model.insertSymbol($0) }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Symbol / number grid
+
+struct InkSymbolPad: View {
+    let symbols: [String]
+    let columns: Int
+    let palette: InkPalette
+    let fonts: InkFontCenter
+    let onTap: (String) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let spacing: CGFloat = 4
+            let rows = max(1, (symbols.count + columns - 1) / columns)
+            let cellHeight = max(28, (geo.size.height - spacing * CGFloat(rows - 1)) / CGFloat(rows))
+            let grid = Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns)
+            LazyVGrid(columns: grid, spacing: spacing) {
+                ForEach(Array(symbols.enumerated()), id: \.offset) { item in
+                    InkKey(
+                        palette: palette,
+                        title: item.element,
+                        titleFont: fonts.swiftUIFont(size: 17, weight: .regular)
+                    ) {
+                        onTap(item.element)
+                    }
+                    .frame(height: cellHeight)
                 }
-                .frame(height: cellHeight)
             }
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
@@ -471,5 +528,15 @@ enum InkSymbols {
         "5", "6", "7", "8",
         "9", "0", ".", "-",
         "/", ":", ";", "("
+    ]
+
+    /// Half-width punctuation for the English 26-key symbol page.
+    static let ascii: [String] = [
+        ",", ".", "?", "!", ":",
+        ";", "'", "\"", "(", ")",
+        "[", "]", "{", "}", "<",
+        ">", "/", "-", "_", "=",
+        "+", "@", "#", "$", "%",
+        "&", "*", "~", "…", "·"
     ]
 }

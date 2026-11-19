@@ -114,6 +114,61 @@ def main():
         check((width, height) == (1024, 1024), f"icon is {width}x{height}")
         check(bit_depth == 8 and color_type == 2, "icon is 8-bit RGB without alpha")
 
+    print("keyboard features")
+
+    def read(rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            return fh.read()
+
+    shared = "InkKey/Shared"
+    for rel in ("InkKeyKeyboard/EnglishKeyboard.swift",
+                "InkKeyKeyboard/ExtraRows.swift",
+                f"{shared}/InkSentenceTranslator.swift",
+                f"{shared}/InkUserFrequency.swift"):
+        check(os.path.isfile(os.path.join(ROOT, rel)), f"{rel} exists")
+
+    strip = read("InkKeyKeyboard/CandidateStrip.swift")
+    check("keyboard.chevron.compact.down" in strip, "dismiss key lives in the always-visible candidate bar")
+    check("dismissKeyboard()" in strip, "dismiss key calls into the model")
+
+    controller = read("InkKeyKeyboard/KeyboardViewController.swift")
+    check("func hideKeyboard()" in controller, "controller implements hideKeyboard")
+    check("dismissKeyboard()" in controller, "controller really closes the keyboard")
+    check("returnKeyType" in controller, "return key label follows the host")
+    check("replaceTrailingWord" in controller, "english completions replace the partial word")
+    check("hasFullAccess" in controller, "full access is passed to the model")
+
+    english = read("InkKeyKeyboard/EnglishKeyboard.swift")
+    check("qwerty" in english.lower(), "26-key QWERTY rows present")
+    check("ShiftKey" in english, "shift key present")
+    check("InkRepeatKey" in english, "backspace with hold-to-repeat in the 26-key layout")
+
+    model_swift = read("InkKeyKeyboard/KeyboardModel.swift")
+    check("tapLetter" in model_swift, "model takes direct letter input")
+    check("selectSyllable" in model_swift, "model locks pinyin syllables")
+    check("updateSentence" in model_swift, "model owns the sentence reference row")
+    check("keyboardHeight" in model_swift, "model reports the height its extra rows need")
+
+    view = read("InkKeyKeyboard/KeyboardView.swift")
+    check("SentenceReferenceRow" in view, "sentence row wired into the root view")
+    check("InlineSyllableStrip" in view, "pinyin chips wired into the root view")
+    check("model.returnKeyLabel" in view, "return key label reaches the keys")
+
+    dictionary_swift = read(f"{shared}/InkDictionary.swift")
+    check("func composition(forDigits" in dictionary_swift, "phrase/sentence Viterbi composition present")
+    check("func syllableOptions" in dictionary_swift, "pinyin syllable options present")
+    check("func englishCompletions" in dictionary_swift, "english prefix completions present")
+    check("boost" in dictionary_swift, "user frequency can boost ranking")
+
+    shared_swift = read(f"{shared}/InkShared.swift")
+    for key in ("translateOnline", "translateEndpoint", "translateModel", "translateKey"):
+        check(key in shared_swift, f"translation setting {key} is shared through the App Group")
+
+    translator = read(f"{shared}/InkSentenceTranslator.swift")
+    check("translate.googleapis.com" in translator, "built-in zero-key translation endpoint")
+    check("chat/completions" in translator, "custom OpenAI-compatible endpoint supported")
+    check("debounce" in translator, "debounced lookups")
+
     print("sources")
     swift_files = []
     for base in ("InkKey", "InkKeyKeyboard"):
@@ -121,7 +176,7 @@ def main():
             for name in names:
                 if name.endswith(".swift"):
                     swift_files.append(os.path.join(dirpath, name))
-    check(len(swift_files) >= 12, f"{len(swift_files)} swift files present")
+    check(len(swift_files) >= 15, f"{len(swift_files)} swift files present")
     for rel in ("InkKey/KeyboardViewController.swift",):
         pass
     check(os.path.isfile(os.path.join(ROOT, "InkKeyKeyboard", "KeyboardViewController.swift")),
