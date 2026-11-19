@@ -197,7 +197,7 @@ final class KeyboardModel: ObservableObject {
         toastWork?.cancel()
         withAnimationIfPossible { self.toast = text }
         let work = DispatchWorkItem { [weak self] in
-            withAnimationIfPossible { self?.toast = nil }
+            self?.withAnimationIfPossible { self?.toast = nil }
         }
         toastWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)

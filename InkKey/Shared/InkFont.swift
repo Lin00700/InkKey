@@ -249,7 +249,7 @@ final class InkFontCenter: ObservableObject {
         var name: String? = nil
         if let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor],
            let descriptor = descriptors.first,
-           let ps = CTFontDescriptorCopyAttribute(descriptor, kCTFontDescriptorAttributeName) as? String {
+           let ps = CTFontDescriptorCopyAttribute(descriptor, kCTFontNameAttribute) as? String {
             name = ps
         }
         if let name {
